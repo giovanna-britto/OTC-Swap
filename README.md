@@ -26,10 +26,10 @@ PORT=3000
 ## Rodando
 ```bash
 npm install
-docker-compose up -d db              # opcional, se não tiver Postgres rodando
+docker-compose up -d db              
 npx prisma migrate deploy
-npx prisma db seed                   # popula os tokens suportados
-npm run start:dev                    # ou npm run start
+npx prisma db seed                  
+npm run start:dev                  
 ```
 
 ### Testes
@@ -37,6 +37,15 @@ npm run start:dev                    # ou npm run start
 npm test
 ```
 Os testes unitários cobrem a fórmula determinística de preço e a normalização/fluxo básico de criação de quote com mocks (não exigem RPC nem banco em execução).
+
+### Docker / docker-compose
+```bash
+docker-compose up --build
+```
+- Sobe Postgres e o backend. O container roda `prisma migrate deploy`, `prisma db seed` e inicia a API (`PORT=3000`).
+- A imagem já é construída com `npm run build`; por segurança o CMD também recompila antes de subir (garante `dist/main`).
+- Ajuste as variáveis de ambiente no comando acima ou em um `.env` (utiliza `${VAR}` do docker-compose).
+> Observação: o build do Nest gera `dist/src/main.js`, então o start de produção e o CMD do container apontam para esse caminho.
 
 ## Tokens e rede utilizados
 - Rede padrão: Sepolia (`CHAIN_ID=11155111`)
@@ -113,9 +122,3 @@ Resposta exemplo:
 - DTOs usam `ValidationPipe` global (whitelist/forbidNonWhitelisted).
 - `/quote` retorna 400 para par não suportado, tokens iguais ou `payAmount` inválido.
 - `/fulfill` retorna 404 se `quoteId` inexistente e 422 se a transação não corresponde ao pagamento esperado.
-
-## Testes
-- O repositório ainda contém apenas o teste de exemplo do Nest. Próximos passos recomendados:
-  - Unit tests para a fórmula de precificação e normalização de decimais.
-  - Integração simulando `/quote` e `/fulfill` com mocks do provider/ethers.
-  - Teste e2e cobrindo validação de entradas inválidas (falta de params, tokens não suportados etc.).

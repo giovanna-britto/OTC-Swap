@@ -13,5 +13,20 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  app:
+    build: .
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql://otc_user:otc_password@db:5432/otc_db
+      RPC_URL: ${RPC_URL:?set RPC_URL}
+      OTC_PRIVATE_KEY: ${OTC_PRIVATE_KEY:?set OTC_PRIVATE_KEY}
+      OTC_ADDRESS: ${OTC_ADDRESS:?set OTC_ADDRESS}
+      CHAIN_ID: ${CHAIN_ID:-11155111}
+      PORT: 3000
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
 volumes:
   postgres_data:
