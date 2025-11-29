@@ -1,18 +1,19 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
 import { TokensService } from 'src/tokens/tokens.service';
-import { firstValueFrom } from 'rxjs';
 
 const SPREAD_BPS = 100;
+const PRICE_BOOK_USD: Record<string, number> = {
+    WBTC: 66000,
+    WETH: 3200,
+    ETH: 3200,
+    USDC: 1,
+};
 
 @Injectable()
 export class PricingService {
-    constructor(
-        private readonly http: HttpService,
-        private readonly tokensService: TokensService,
-    ) {}
+    constructor(private readonly tokensService: TokensService) {}
 
-    // Essa função serve para calcular quantos que o usuário vai receber, usando a api da Coingecko - que é gratuita e mais simples de usar
+    // Regra determinística: preço fixo em USD definido em PRICE_BOOK_USD e spread de 100 bps.
     async getReceiveAmount(params: {
         payTokenAddress: string;
         receiveTokenAddress: string;
@@ -29,33 +30,17 @@ export class PricingService {
         if (!payToken || !receiveToken) {
         throw new BadRequestException('Par de tokens não suportado');
         }
-        if (!payToken.coingeckoId || !receiveToken.coingeckoId) {
-        throw new BadRequestException('Token sem coingeckoId configurado');
-        }
 
         const payAmount = Number(params.payAmount);
         if (isNaN(payAmount) || payAmount <= 0) {
         throw new BadRequestException('payAmount inválido');
         }
 
-        // Chama a api da coingecko
-        const ids = `${payToken.coingeckoId},${receiveToken.coingeckoId}`;
-        const url = 'https://api.coingecko.com/api/v3/simple/price';
-        const response = await firstValueFrom(
-        this.http.get(url, {
-            params: {
-            ids,
-            vs_currencies: 'usd',
-            },
-        }),
-        );
-
-        const data = response.data as Record<string, { usd: number }>;
-        const payTokenPriceUsd = data[payToken.coingeckoId]?.usd;
-        const receiveTokenPriceUsd = data[receiveToken.coingeckoId]?.usd;
+        const payTokenPriceUsd = PRICE_BOOK_USD[payToken.symbol];
+        const receiveTokenPriceUsd = PRICE_BOOK_USD[receiveToken.symbol];
 
         if (!payTokenPriceUsd || !receiveTokenPriceUsd) {
-        throw new BadRequestException('Falha ao obter preços de mercado');
+        throw new BadRequestException('Token sem preço configurado na regra determinística');
         }
 
         // quanto o cliente está pagando em USD
@@ -76,4 +61,3 @@ export class PricingService {
         };
     }
 }
-

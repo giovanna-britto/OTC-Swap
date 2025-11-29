@@ -161,4 +161,80 @@ export class BlockchainService {
       throw new InternalServerErrorException('Falha ao enviar payout on-chain');
     }
   }
+
+  async sendEthPayout(params: { to: string; amountWei: string }): Promise<{ txHash: string }> {
+    try {
+      const to = ethers.getAddress(params.to);
+      const value = BigInt(params.amountWei);
+      const tx = await this.wallet.sendTransaction({ to, value });
+      this.logger.log(
+        `Enviando payout em ETH: to=${to} amountWei=${value.toString()} txHash=${tx.hash}`,
+      );
+      await tx.wait(1);
+      return { txHash: tx.hash };
+    } catch (err) {
+      this.logger.error('Erro ao enviar payout ETH', err as any);
+      throw new InternalServerErrorException('Falha ao enviar payout ETH');
+    }
+  }
+
+  async validateEthPayment(params: {
+    expectedAmountWei: string;
+    expectedTo?: string;
+    expectedFrom?: string;
+    txHash: string;
+    }): Promise<{ valid: boolean; reason?: string; payerAddress?: string }> {
+    const { expectedAmountWei, expectedTo, expectedFrom, txHash } = params;
+
+    try {
+        const tx = await this.provider.getTransaction(txHash);
+        if (!tx) {
+        return { valid: false, reason: 'Transação não encontrada' };
+        }
+
+        const receipt = await this.provider.getTransactionReceipt(txHash);
+        if (!receipt) {
+        return { valid: false, reason: 'Receipt da transação não encontrado (tx pendente?)' };
+        }
+
+        if (receipt.status !== 1) {
+        return { valid: false, reason: 'Transação falhou na blockchain' };
+        }
+
+        const expectedToAddress = expectedTo
+        ? ethers.getAddress(expectedTo)
+        : this.otcAddress;
+
+        if (!tx.to || ethers.getAddress(tx.to) !== expectedToAddress) {
+        return { valid: false, reason: 'Destino da transação ETH é diferente do endereço esperado' };
+        }
+
+        const expectedAmount = BigInt(expectedAmountWei);
+        if (tx.value !== expectedAmount) {
+        return {
+            valid: false,
+            reason: `Valor enviado em ETH (${tx.value.toString()}) não bate com o esperado (${expectedAmount.toString()})`,
+        };
+        }
+
+        if (expectedFrom) {
+        const fromNormalized = ethers.getAddress(expectedFrom);
+        if (ethers.getAddress(tx.from!) !== fromNormalized) {
+            return { valid: false, reason: 'Transação foi enviada por outro address diferente do esperado' };
+        }
+        }
+
+        return {
+        valid: true,
+        payerAddress: tx.from ? ethers.getAddress(tx.from) : undefined,
+        };
+    } catch (err) {
+        this.logger.error('Erro ao validar transação ETH', err as any);
+        return {
+        valid: false,
+        reason: 'Erro interno ao validar transação ETH',
+        };
+    }
+    }
+
 }

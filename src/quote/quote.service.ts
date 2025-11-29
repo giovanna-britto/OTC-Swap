@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TokensService } from '../tokens/tokens.service';
 import { PricingService } from '../pricing/pricing.service';
@@ -17,7 +22,7 @@ export class QuoteService {
     private readonly blockchainService: BlockchainService,
   ) {}
 
-  // Get do quote
+  // GET /quote
   async createQuote(dto: GetQuoteDto) {
     const { payToken, receiveToken, payAmount } = dto;
 
@@ -32,7 +37,10 @@ export class QuoteService {
       throw new BadRequestException('Par de tokens não suportado');
     }
 
-    // Aqui calcula quanto o usuário deve receber 
+    // aqui eu identificamos se o payToken é ETH
+    const isEthPayToken = payTokenEntity.symbol === 'ETH';
+
+    // calcula quanto o usuário deve receber
     const pricing = await this.pricingService.getReceiveAmount({
       payTokenAddress: payToken,
       receiveTokenAddress: receiveToken,
@@ -46,20 +54,25 @@ export class QuoteService {
       throw new BadRequestException('Falha ao calcular receiveAmount');
     }
 
-    // Converte valores para smallest unit (wei)
+    // converto os valores para smallest unit (wei)
+
+    const normalizedPayAmount = this.normalizeDecimals(
+      payAmount,
+      payTokenEntity.decimals,
+    );
+
     const payAmountWei = ethers
-      .parseUnits(payAmount, payTokenEntity.decimals)
+      .parseUnits(normalizedPayAmount, payTokenEntity.decimals)
       .toString();
 
     const normalizedReceiveAmount = this.normalizeDecimals(
-    receiveAmount,
-    receiveTokenEntity.decimals,
+      receiveAmount,
+      receiveTokenEntity.decimals,
     );
 
     const receiveAmountWei = ethers
-    .parseUnits(normalizedReceiveAmount, receiveTokenEntity.decimals)
-    .toString();
-
+      .parseUnits(normalizedReceiveAmount, receiveTokenEntity.decimals)
+      .toString();
 
     // Cria a Quote no banco
     const quote = await this.prisma.quote.create({
@@ -81,11 +94,32 @@ export class QuoteService {
       },
     });
 
-    // Gera calldata para o transfer do payToken
-    const calldata = this.blockchainService.encodeErc20TransferCalldata(
-      this.blockchainService.otcAddress,
-      payAmountWei,
-    );
+    // Gera instruções de pagamento (payment)
+    let payment: any;
+
+    if (isEthPayToken) {
+      // caso eth: pagamento é ETH nativo, sem calldata
+      payment = {
+        to: this.blockchainService.otcAddress,    // mesa recebe o ETH
+        tokenAddress: null,                      // não tem contrato de ETH
+        calldata: null,                          // usuário só manda value
+        value: payAmountWei,                     // valor em wei que o cliente deve mandar
+        chainId: this.blockchainService.chainId,
+      };
+    } else {
+      // caso erc20: mantém seu fluxo anterior com calldata de transfer
+      const calldata = this.blockchainService.encodeErc20TransferCalldata(
+        this.blockchainService.otcAddress,
+        payAmountWei,
+      );
+
+      payment = {
+        to: quote.payToken.address,              // contrato do token
+        tokenAddress: quote.payToken.address,
+        calldata,
+        chainId: this.blockchainService.chainId,
+      };
+    }
 
     return {
       quoteId: quote.quoteId,
@@ -93,25 +127,18 @@ export class QuoteService {
       payAmount: payAmountWei,
       receiveToken: quote.receiveToken.address,
       receiveAmount: receiveAmountWei,
-      payment: {
-        to: this.blockchainService.otcAddress,
-        tokenAddress: quote.payToken.address,
-        calldata,
-        chainId: this.blockchainService.chainId,
-      },
+      payment,
     };
   }
 
-  // Agora é o fluxo do POST /fulfill
+  // POST /fulfill
   async fulfillQuote(dto: FulfillDto) {
     const { quoteId, txHash } = dto;
 
+    // Buscar quote
     const quote = await this.prisma.quote.findUnique({
       where: { quoteId },
-      include: {
-        payToken: true,
-        receiveToken: true,
-      },
+      include: { payToken: true, receiveToken: true },
     });
 
     if (!quote) {
@@ -124,13 +151,29 @@ export class QuoteService {
       );
     }
 
-    // Primeiro é validada a transação de pagamento
-    const validation = await this.blockchainService.validateErc20Payment({
-      tokenAddress: quote.payToken.address,
-      expectedAmountWei: quote.payAmountWei,
-      expectedTo: this.blockchainService.otcAddress,
-      txHash,
-    });
+    //Detecta se o pagamento esperado é em ETH ou ERC20
+    const isEthPayToken = quote.payToken.symbol === 'ETH';
+    const isReceiveEth = quote.receiveToken.symbol === 'ETH';
+
+    // Validar tx on-chain
+    let validation;
+
+    if (isEthPayToken) {
+      // caso eth: valida transação nativa de ETH
+      validation = await this.blockchainService.validateEthPayment({
+        expectedAmountWei: quote.payAmountWei,
+        expectedTo: this.blockchainService.otcAddress,
+        txHash,
+      });
+    } else {
+      //caso erc20: mantém validação antiga
+      validation = await this.blockchainService.validateErc20Payment({
+        tokenAddress: quote.payToken.address,
+        expectedAmountWei: quote.payAmountWei,
+        expectedTo: this.blockchainService.otcAddress,
+        txHash,
+      });
+    }
 
     if (!validation.valid) {
       throw new UnprocessableEntityException({
@@ -139,23 +182,28 @@ export class QuoteService {
       });
     }
 
-    const payerAddress =
-      validation.payerAddress ?? quote.payerAddress ?? undefined;
-
-    if (!payerAddress) {
-      throw new UnprocessableEntityException(
-        'Não foi possível determinar o address do pagador',
-      );
+    if (!validation.payerAddress) {
+      throw new UnprocessableEntityException({
+        message: 'Endereço do pagador não encontrado na validação da transação',
+        reason: validation.reason || 'payerAddress undefined',
+      });
     }
 
-    // Depois o payout de pagamento é enviado para o usuário
-    const payout = await this.blockchainService.sendErc20Payout({
-      tokenAddress: quote.receiveToken.address,
-      to: payerAddress,
-      amountWei: quote.receiveAmountWei,
-    });
+    const payerAddress = validation.payerAddress.toLowerCase();
 
-    // Atualiza a Quote no banco
+    // Enviar payout
+    const payout = isReceiveEth
+      ? await this.blockchainService.sendEthPayout({
+          to: payerAddress,
+          amountWei: quote.receiveAmountWei,
+        })
+      : await this.blockchainService.sendErc20Payout({
+          tokenAddress: quote.receiveToken.address,
+          to: payerAddress,
+          amountWei: quote.receiveAmountWei,
+        });
+
+    // Atualizar quote
     const updated = await this.prisma.quote.update({
       where: { id: quote.id },
       data: {
@@ -163,13 +211,14 @@ export class QuoteService {
         payTxHash: txHash,
         payoutTxHash: payout.txHash,
         fulfilledAt: new Date(),
-        payerAddress: quote.payerAddress ?? payerAddress.toLowerCase(),
+        payerAddress,
       },
       include: {
         receiveToken: true,
       },
     });
 
+    // Resposta final
     return {
       status: 'fulfilled',
       quoteId: updated.quoteId,
@@ -183,27 +232,20 @@ export class QuoteService {
     };
   }
 
-  // Eu tive um problema com o tamanho do valor que a variável estava receiveAmountWei estava recebendo
-  // Ele estava muito abaixo do esperado, ou seja eu não tratei o valor
-  // Para corrigir isso, eu criar a função abaixo para fazer o tratamento desse dados
-  
-    private normalizeDecimals(amount: string, decimals: number): string {
-    // garante que é string
+  // Normalização de casas decimais
+  private normalizeDecimals(amount: string, decimals: number): string {
     const str = String(amount);
-
     const [intPart, fracPart = ''] = str.split('.');
 
     if (decimals === 0) {
-        return intPart; // ignora qualquer fração
+      return intPart;
     }
-    // completa com zeros à direita e corta no número de decimais do token
+
     const fracNormalized = (fracPart + '0'.repeat(decimals)).slice(0, decimals);
 
-    // se não tiver parte fracionária relevante, não coloca ponto no final
     if (fracNormalized.replace(/0+$/, '') === '') {
-        return intPart;
+      return intPart;
     }
     return `${intPart}.${fracNormalized}`;
-    }
-
+  }
 }

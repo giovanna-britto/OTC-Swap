@@ -17,7 +17,7 @@ async function main() {
   const tokens = [
     {
       symbol: 'WBTC',
-      address: '0xb060796D171EeEdA5Fb99df6B2847DA6D4613CAd'.toLowerCase(),
+      address: '0x29f2d40b0605204364af54ec677bd022da425d03'.toLowerCase(),
       decimals: 8,
       coingeckoId: 'wrapped-bitcoin',
     },
@@ -29,10 +29,17 @@ async function main() {
     },
     {
       symbol: 'USDC',
-      address: '0xba1FCc7a596140e5feC52B3aB80a8F000C9Af104'.toLowerCase(),
+      address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238'.toLowerCase(),
       decimals: 6,
       coingeckoId: 'usd-coin',
     },
+      {
+    symbol: 'ETH',
+    // endereço só pra identificarmos no banco, já que não existe contrato de ETH em si
+    address: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE'.toLowerCase(),
+    decimals: 18,
+    coingeckoId: 'ethereum',
+  },
   ];
 
   for (const t of tokens) {
