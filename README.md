@@ -35,8 +35,9 @@ npm run start:dev
 ### Testes
 ```bash
 npm test
+npm run test:e2e
 ```
-Os testes unitários cobrem a fórmula determinística de preço e a normalização/fluxo básico de criação de quote com mocks (não exigem RPC nem banco em execução).
+Os testes unitários cobrem a fórmula determinística de preço e a normalização/fluxo básico de criação de quote com mocks (não exigem RPC nem banco em execução). Os e2e usam supertest com mocks para `/quote` e `/fulfill`; se o ambiente bloquear abertura de socket local, eles são automaticamente ignorados.
 
 ### Docker / docker-compose
 ```bash
