@@ -5,9 +5,10 @@ import { PrismaModule } from './prisma/prisma.module';
 import { TokensModule } from './tokens/tokens.module';
 import { PricingModule } from './pricing/pricing.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
+import { QuoteModule } from './quote/quote.module';
 
 @Module({
-  imports: [PrismaModule, TokensModule, PricingModule, BlockchainModule],
+  imports: [PrismaModule, TokensModule, PricingModule, BlockchainModule, QuoteModule],
   controllers: [AppController],
   providers: [AppService],
 })

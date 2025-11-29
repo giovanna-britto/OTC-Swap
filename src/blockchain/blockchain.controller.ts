@@ -5,6 +5,7 @@ import { BlockchainService } from './blockchain.service';
 export class BlockchainController {
   constructor(private readonly blockchainService: BlockchainService) {}
 
+  // DE novo, mais uma rota feita apenas para validar se o modulo funciona
   @Get('info')
   info(){
     return{

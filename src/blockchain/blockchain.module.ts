@@ -5,6 +5,7 @@ import { ConfigModule } from '@nestjs/config'
 @Module({
   controllers: [BlockchainController],
   providers: [BlockchainService],
-  imports: [ConfigModule]
+  imports: [ConfigModule],
+  exports: [BlockchainService]
 })
 export class BlockchainModule {}
