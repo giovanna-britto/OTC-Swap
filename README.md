@@ -1,98 +1,121 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# OTC Swap API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Backend em NestJS que calcula cotações de swaps OTC entre tokens ERC20/ETH, valida o pagamento on-chain e executa o payout da contraparte.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Stack
+- Node.js + NestJS 11
+- Prisma + PostgreSQL
+- Ethers v6
 
-## Description
+## Requisitos locais
+- Node 20+ e npm
+- Docker (opcional) para subir o Postgres (`docker-compose up -d db`)
+- RPC HTTP para a rede escolhida (Sepolia no exemplo)
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Variáveis de ambiente (.env)
+```
+DATABASE_URL=postgresql://otc_user:otc_password@localhost:5432/otc_db
+RPC_URL=https://sepolia.infura.io/v3/SEU_PROJECT_ID
+OTC_PRIVATE_KEY=0x....            # chave privada que envia o payout
+OTC_ADDRESS=0x1234...             # endereço público da mesa (mesmo da chave acima)
+CHAIN_ID=11155111                 # Sepolia
+PORT=3000
+```
+> A chave precisa ter saldo real na rede selecionada para assinar e enviar payouts.
 
-## Project setup
-
+## Rodando
 ```bash
-$ npm install
+npm install
+docker-compose up -d db              # opcional, se não tiver Postgres rodando
+npx prisma migrate deploy
+npx prisma db seed                   # popula os tokens suportados
+npm run start:dev                    # ou npm run start
 ```
 
-## Compile and run the project
-
+### Testes
 ```bash
-# development
-$ npm run start
+npm test
+```
+Os testes unitários cobrem a fórmula determinística de preço e a normalização/fluxo básico de criação de quote com mocks (não exigem RPC nem banco em execução).
 
-# watch mode
-$ npm run start:dev
+## Tokens e rede utilizados
+- Rede padrão: Sepolia (`CHAIN_ID=11155111`)
+- Tokens seedados (`prisma/seed.ts`):
+  - WBTC `0x29f2d40b0605204364af54ec677bd022da425d03` (8 decimais)
+  - WETH `0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14` (18)
+  - USDC `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` (6)
+  - ETH nativo (marcado com endereço sentinela `0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE`)
+- Liquidez assumida pela mesa: 1 WBTC, 30 ETH, 100_000 USDC.
 
-# production mode
-$ npm run start:prod
+## Regra de precificação (determinística)
+- Tabela fixa de preços em USD:
+  - WBTC: 66,000
+  - WETH: 3,200
+  - ETH: 3,200
+  - USDC: 1
+- Spread de 100 bps (1%) aplicado sobre o valor em USD que o cliente paga.
+- Fórmula: `receiveAmount = payAmount * payTokenPriceUsd * (1 - spread/10_000) / receiveTokenPriceUsd`.
+- Valores são convertidos para smallest unit (wei) antes de serem armazenados/retornados.
+
+## Rotas principais
+### GET /quote
+Parâmetros: `payToken` (address), `receiveToken` (address), `payAmount` (string/decimal em unidades humanas).
+
+Exemplo:
+```bash
+curl "http://localhost:3000/quote?payToken=0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14&receiveToken=0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238&payAmount=0.1"
+```
+Resposta (resumo):
+```json
+{
+  "quoteId": "...",
+  "payToken": "0xfFf...6B14",
+  "payAmount": "100000000000000000",        // wei
+  "receiveToken": "0x1c7D...7238",
+  "receiveAmount": "313200000",              // em smallest unit do token
+  "payment": {
+    "to": "0xfFf...6B14",                    // contrato ERC20 ou otcAddress para ETH
+    "tokenAddress": "0xfFf...6B14" | null,
+    "calldata": "0xa9059cbb..." | null,      // se ETH, cliente envia value direto
+    "value": "..." | null,
+    "chainId": 11155111
+  }
+}
 ```
 
-## Run tests
+### POST /fulfill
+Corpo:
+```json
+{
+  "quoteId": "<quoteId retornado em /quote>",
+  "txHash": "0x<hash da transação de pagamento>"
+}
+```
+- Valida a transação on-chain: status 1, endereço e método esperados (ERC20.transfer), quantidade correta e destinatário igual ao OTC.
+- Se válido, envia o payout: ETH nativo quando `receiveToken` é ETH; ERC20 `transfer` nos demais casos.
 
-```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+Resposta exemplo:
+```json
+{
+  "status": "fulfilled",
+  "quoteId": "...",
+  "payTxHash": "0x...",
+  "payout": {
+    "token": "0x1c7D...7238",
+    "amount": "313200000",
+    "txHash": "0x...",
+    "status": "sent"
+  }
+}
 ```
 
-## Deployment
+## Validações e erros
+- DTOs usam `ValidationPipe` global (whitelist/forbidNonWhitelisted).
+- `/quote` retorna 400 para par não suportado, tokens iguais ou `payAmount` inválido.
+- `/fulfill` retorna 404 se `quoteId` inexistente e 422 se a transação não corresponde ao pagamento esperado.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+## Testes
+- O repositório ainda contém apenas o teste de exemplo do Nest. Próximos passos recomendados:
+  - Unit tests para a fórmula de precificação e normalização de decimais.
+  - Integração simulando `/quote` e `/fulfill` com mocks do provider/ethers.
+  - Teste e2e cobrindo validação de entradas inválidas (falta de params, tokens não suportados etc.).

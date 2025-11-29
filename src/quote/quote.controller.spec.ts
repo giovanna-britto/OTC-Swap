@@ -4,11 +4,12 @@ import { QuoteService } from './quote.service';
 
 describe('QuoteController', () => {
   let controller: QuoteController;
+  const quotesService = {} as QuoteService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [QuoteController],
-      providers: [QuoteService],
+      providers: [{ provide: QuoteService, useValue: quotesService }],
     }).compile();
 
     controller = module.get<QuoteController>(QuoteController);
