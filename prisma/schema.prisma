@@ -1,0 +1,66 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Token {
+  id           Int      @id @default(autoincrement())
+  symbol       String   @unique       // "WBTC", "WETH", "USDC"
+  address      String   @unique       // endereço ERC20 na rede escolhida
+  decimals     Int
+  coingeckoId  String?                // "wrapped-bitcoin", "weth", "usd-coin"
+  createdAt    DateTime @default(now())
+
+  quotesPay    Quote[]  @relation("PayToken")
+  quotesReceive Quote[] @relation("ReceiveToken")
+}
+
+model Quote {
+  id               Int          @id @default(autoincrement())
+  quoteId          String       @unique // ID exposto para o cliente (uuid)
+  status           QuoteStatus  @default(PENDING)
+
+  // Relações com Token (quem paga e quem recebe)
+  payTokenId       Int
+  payToken         Token        @relation("PayToken", fields: [payTokenId], references: [id])
+  receiveTokenId   Int
+  receiveToken     Token        @relation("ReceiveToken", fields: [receiveTokenId], references: [id])
+
+  // Valores em smallest unit (wei, etc.)
+  payAmountWei       String
+  receiveAmountWei   String
+
+  // Dados adicionais
+  payerAddress     String?      // address esperado do cliente
+  chainId          Int
+
+  // Preço usado na cotação
+  payTokenPriceUsd     Float    // preço 1 unidade do payToken em USD usado na quote
+  receiveTokenPriceUsd Float    // preço 1 unidade do receiveToken em USD usado na quote
+  spreadBps            Int      // spread em basis points
+
+  // Execução
+  payTxHash        String?      // txHash que o cliente enviou
+  payoutTxHash     String?      // txHash da mesa ao pagar contraparte
+  fulfilledAt      DateTime?
+
+  createdAt        DateTime @default(now())
+  expiresAt        DateTime? // opcional: quote expira
+}
+
+enum QuoteStatus {
+  PENDING
+  FULFILLED
+  EXPIRED
+  CANCELLED
+}
